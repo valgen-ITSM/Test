@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Todo App</title>
+  <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone/babel.min.js"></script>
+  <!-- idb: tiny promise-based IndexedDB wrapper -->
+  <script src="https://cdn.jsdelivr.net/npm/idb@8/build/umd.js"></script>
+  <style>
+    :root {
+      --color-primary: #6366f1;
+      --color-primary-content: #ffffff;
+      --color-base-100: #f9fafb;
+      --color-base-200: #f1f5f9;
+      --color-base-300: #e2e8f0;
+      --color-base-content: #1e293b;
+      --color-muted: #64748b;
+      --color-error: #ef4444;
+      --color-success: #22c55e;
+      --color-border: #cbd5e1;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--color-base-100);
+      color: var(--color-base-content);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 48px 16px;
+    }
+
+    #root { width: 100%; max-width: 520px; }
+
+    h1 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      margin-bottom: 24px;
+      color: var(--color-base-content);
+    }
+
+    .input-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+
+    input[type="text"] {
+      flex: 1;
+      padding: 10px 14px;
+      border: 1.5px solid var(--color-border);
+      border-radius: 8px;
+      font-size: 0.95rem;
+      background: white;
+      color: var(--color-base-content);
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    input[type="text"]:focus {
+      border-color: var(--color-primary);
+    }
+
+    button.add-btn {
+      padding: 10px 18px;
+      background: var(--color-primary);
+      color: var(--color-primary-content);
+      border: none;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+      white-space: nowrap;
+    }
+
+    button.add-btn:hover { opacity: 0.88; }
+    button.add-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .filters {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 16px;
+    }
+
+    .filter-btn {
+      padding: 5px 14px;
+      border-radius: 20px;
+      border: 1.5px solid var(--color-border);
+      background: white;
+      color: var(--color-muted);
+      font-size: 0.85rem;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .filter-btn.active {
+      background: var(--color-primary);
+      color: var(--color-primary-content);
+      border-color: var(--color-primary);
+    }
+
+    .todo-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .todo-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      background: white;
+      border: 1.5px solid var(--color-border);
+      border-radius: 10px;
+      transition: opacity 0.15s;
+    }
+
+    .todo-item.done { opacity: 0.55; }
+
+    .todo-item input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: var(--color-primary);
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .todo-text {
+      flex: 1;
+      font-size: 0.95rem;
+      word-break: break-word;
+    }
+
+    .todo-item.done .todo-text {
+      text-decoration: line-through;
+      color: var(--color-muted);
+    }
+
+    .delete-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--color-muted);
+      font-size: 1.1rem;
+      padding: 2px 6px;
+      border-radius: 6px;
+      transition: color 0.15s, background 0.15s;
+      flex-shrink: 0;
+    }
+
+    .delete-btn:hover {
+      color: var(--color-error);
+      background: #fee2e2;
+    }
+
+    .empty {
+      text-align: center;
+      color: var(--color-muted);
+      font-size: 0.9rem;
+      padding: 32px 0;
+    }
+
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 16px;
+      font-size: 0.82rem;
+      color: var(--color-muted);
+    }
+
+    .clear-btn {
+      background: none;
+      border: none;
+      color: var(--color-error);
+      font-size: 0.82rem;
+      cursor: pointer;
+      padding: 0;
+    }
+
+    .clear-btn:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useCallback } = React;
+
+    // --- IndexedDB setup via idb library ---
+    const DB_NAME = "todo-db";
+    const STORE   = "todos";
+
+    function openDB() {
+      return idb.openDB(DB_NAME, 1, {
+        upgrade(db) {
+          if (!db.objectStoreNames.contains(STORE)) {
+            // keyPath: "id" means each record's id field is the primary key
+            db.createObjectStore(STORE, { keyPath: "id" });
+          }
+        },
+      });
+    }
+
+    // --- Custom hook: syncs todos with IndexedDB ---
+    function useIndexedDB() {
+      const [todos, setTodos] = useState([]);
+      const [ready, setReady] = useState(false);
+
+      // Load all todos from IDB on mount
+      useEffect(() => {
+        openDB().then(async db => {
+          const all = await db.getAll(STORE);
+          // Sort newest-first by createdAt timestamp
+          all.sort((a, b) => b.createdAt - a.createdAt);
+          setTodos(all);
+          setReady(true);
+        });
+      }, []);
+
+      const addTodo = useCallback(async (text) => {
+        const todo = { id: crypto.randomUUID(), text, done: false, createdAt: Date.now() };
+        const db = await openDB();
+        await db.put(STORE, todo);
+        setTodos(prev => [todo, ...prev]);
+      }, []);
+
+      const toggleTodo = useCallback(async (id) => {
+        const db = await openDB();
+        const todo = await db.get(STORE, id);
+        const updated = { ...todo, done: !todo.done };
+        await db.put(STORE, updated);
+        setTodos(prev => prev.map(t => t.id === id ? updated : t));
+      }, []);
+
+      const deleteTodo = useCallback(async (id) => {
+        const db = await openDB();
+        await db.delete(STORE, id);
+        setTodos(prev => prev.filter(t => t.id !== id));
+      }, []);
+
+      const clearDone = useCallback(async () => {
+        const db = await openDB();
+        const tx = db.transaction(STORE, "readwrite");
+        const done = (await tx.store.getAll()).filter(t => t.done);
+        await Promise.all(done.map(t => tx.store.delete(t.id)));
+        await tx.done;
+        setTodos(prev => prev.filter(t => !t.done));
+      }, []);
+
+      return { todos, ready, addTodo, toggleTodo, deleteTodo, clearDone };
+    }
+
+    // --- Main App ---
+    function App() {
+      const { todos, ready, addTodo, toggleTodo, deleteTodo, clearDone } = useIndexedDB();
+      const [input, setInput]   = useState("");
+      const [filter, setFilter] = useState("all"); // all | active | done
+
+      const handleAdd = () => {
+        const text = input.trim();
+        if (!text) return;
+        addTodo(text);
+        setInput("");
+      };
+
+      const handleKeyDown = (e) => {
+        if (e.key === "Enter") handleAdd();
+      };
+
+      const filtered = todos.filter(t => {
+        if (filter === "active") return !t.done;
+        if (filter === "done")   return  t.done;
+        return true;
+      });
+
+      const doneCount   = todos.filter(t =>  t.done).length;
+      const activeCount = todos.filter(t => !t.done).length;
+
+      if (!ready) return (
+        <p style={{ color: "var(--color-muted)", padding: "48px 0", textAlign: "center" }}>
+          Loading…
+        </p>
+      );
+
+      return (
+        <>
+          <h1>📝 Todo</h1>
+
+          <div className="input-row">
+            <input
+              type="text"
+              placeholder="What needs to be done?"
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              autoFocus
+            />
+            <button className="add-btn" onClick={handleAdd} disabled={!input.trim()}>
+              Add
+            </button>
+          </div>
+
+          <div className="filters">
+            {["all", "active", "done"].map(f => (
+              <button
+                key={f}
+                className={`filter-btn ${filter === f ? "active" : ""}`}
+                onClick={() => setFilter(f)}
+              >
+                {f.charAt(0).toUpperCase() + f.slice(1)}
+                {f === "active" && activeCount > 0 && ` (${activeCount})`}
+                {f === "done"   && doneCount   > 0 && ` (${doneCount})`}
+              </button>
+            ))}
+          </div>
+
+          <div className="todo-list">
+            {filtered.length === 0 ? (
+              <p className="empty">
+                {filter === "done"   ? "No completed tasks yet." :
+                 filter === "active" ? "Nothing left to do! 🎉" :
+                                       "Add your first task above."}
+              </p>
+            ) : (
+              filtered.map(todo => (
+                <div key={todo.id} className={`todo-item ${todo.done ? "done" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={todo.done}
+                    onChange={() => toggleTodo(todo.id)}
+                  />
+                  <span className="todo-text">{todo.text}</span>
+                  <button className="delete-btn" onClick={() => deleteTodo(todo.id)} title="Delete">
+                    ✕
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+
+          {todos.length > 0 && (
+            <div className="footer">
+              <span>{activeCount} item{activeCount !== 1 ? "s" : ""} left</span>
+              {doneCount > 0 && (
+                <button className="clear-btn" onClick={clearDone}>
+                  Clear completed ({doneCount})
+                </button>
+              )}
+            </div>
+          )}
+        </>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
